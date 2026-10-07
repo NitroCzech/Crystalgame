@@ -1,0 +1,10 @@
+# Godot 4
+.godot/
+/android/
+*.tmp
+*.translation
+
+# Exports
+/build/
+*.apk
+*.aab
