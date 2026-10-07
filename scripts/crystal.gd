@@ -1,13 +1,18 @@
 extends Control
-## The big tappable crystal, drawn procedurally so no art assets are needed yet.
+## The big tappable crystal. Draws the picked art for `art_slot` when there is
+## one, otherwise a procedural crystal.
 
 signal tapped(global_pos: Vector2)
+
+const Art := preload("res://scripts/art.gd")
 
 ## Base color; facets, outline and glow are derived from it.
 var tint := Color("8c6dff"):
 	set(value):
 		tint = value
 		queue_redraw()
+## Art slot to draw instead of the procedural crystal, e.g. "crystal".
+var art_slot := ""
 ## When false the crystal is display-only (e.g. in the geode reveal).
 var interactive := true
 
@@ -54,6 +59,12 @@ func _draw() -> void:
 
 	for i in 3:
 		draw_circle(c, r * (1.15 - i * 0.08), Color(tint, 0.06 + 0.04 * pulse))
+
+	var art := Art.texture(art_slot)
+	if art:
+		var side := r * 2.2
+		draw_texture_rect(art, Rect2(c - Vector2(side, side) / 2.0, Vector2(side, side)), false)
+		return
 
 	var top := c + Vector2(0, -r)
 	var bottom := c + Vector2(0, r)
