@@ -1,0 +1,78 @@
+name: Android debug APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Keep in step with config/features in project.godot.
+  GODOT_VERSION: "4.3"
+
+jobs:
+  export-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache Godot
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-android
+
+      - name: Download Godot and Android export templates
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          base=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable
+          mkdir -p ~/godot
+          curl -sSLo /tmp/godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d ~/godot
+          mv ~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 ~/godot/godot
+          templates=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$templates"
+          curl -sSLo /tmp/templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q -j /tmp/templates.tpz 'templates/android_*' 'templates/version.txt' -d "$templates"
+          rm /tmp/godot.zip /tmp/templates.tpz
+
+      - name: Create debug keystore
+        run: |
+          keytool -genkeypair -keystore ~/debug.keystore -storepass android \
+            -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Import project
+        run: ~/godot/godot --headless --import
+
+      - name: Point Godot at the runner's Android SDK and keystore
+        run: |
+          settings=$(ls ~/.config/godot/editor_settings-*.tres | head -n1)
+          sed -i -E '/^export\/android\/(android_sdk_path|java_sdk_path|debug_keystore|debug_keystore_user|debug_keystore_pass) =/d' "$settings"
+          cat >> "$settings" <<SETTINGS
+          export/android/android_sdk_path = "${ANDROID_HOME}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/debug_keystore = "${HOME}/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          SETTINGS
+          grep '^export/android/' "$settings"
+
+      - name: Export debug APK
+        run: |
+          mkdir -p build
+          ~/godot/godot --headless --export-debug "Android" build/crystalize-debug.apk
+          test -s build/crystalize-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crystalize-debug-apk
+          path: build/crystalize-debug.apk
+          if-no-files-found: error
