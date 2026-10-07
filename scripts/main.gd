@@ -3,6 +3,7 @@ extends Control
 ## layout is easy to tweak without the editor.
 
 const Crystal := preload("res://scripts/crystal.gd")
+const Art := preload("res://scripts/art.gd")
 
 const BG_COLOR := Color("140c2a")
 const PANEL_COLOR := Color("23174a")
@@ -114,6 +115,16 @@ func _build_ui() -> void:
 	bg.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(bg)
 
+	var bg_art := Art.texture("background")
+	if bg_art:
+		var bg_image := TextureRect.new()
+		bg_image.texture = bg_art
+		bg_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		bg_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		bg_image.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+		bg_image.mouse_filter = MOUSE_FILTER_IGNORE
+		add_child(bg_image)
+
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", 24)
@@ -148,6 +159,7 @@ func _build_ui() -> void:
 	column.add_child(crystal_area)
 
 	_crystal = Crystal.new()
+	_crystal.art_slot = "crystal"
 	_crystal.custom_minimum_size = Vector2(320, 320)
 	_crystal.tapped.connect(_on_crystal_tapped)
 	crystal_area.add_child(_crystal)
@@ -344,6 +356,7 @@ func _show_geode_reveal(found: Dictionary) -> void:
 	var gem := Crystal.new()
 	gem.interactive = false
 	gem.tint = color
+	gem.art_slot = "gem_" + found.id
 	gem.custom_minimum_size = Vector2(220, 220)
 	holder.add_child(gem)
 	gem.scale = Vector2(0.2, 0.2)
