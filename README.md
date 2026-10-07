@@ -16,6 +16,18 @@ The window opens in a phone-shaped portrait layout (720×1280, scaled down on de
 
 - **Tap the crystal** for shards (with a bounce and floating "+N").
 - **Sharper Pickaxe** upgrade doubles shards per tap each level.
+- **Geodes**: buy them with shards (each costs 18% more than the last) or find them by tapping (1.5% chance per tap). Opening one reveals a crystal from seven rarities, and every crystal you own permanently boosts all production:
+
+  | Rarity | Crystal | Chance | Bonus each |
+  | --- | --- | --- | --- |
+  | Common | Quartz | 55% | +1% |
+  | Uncommon | Amethyst | 25% | +3% |
+  | Rare | Sapphire | 12% | +8% |
+  | Epic | Void Opal | 5.5% | +20% |
+  | Legendary | Sunstone | 2% | +50% |
+  | Mythic | Bloodheart Ruby | 0.45% | +150% |
+  | Celestial | Starcore Diamond | 0.05% | +500% |
+
 - **Six generators** (Shard Miner → Crystal Temple) that produce shards every second. Each purchase raises that generator's price by 15%.
 - **Saving**: progress autosaves every 10 seconds and whenever the app is closed or sent to the background (`user://save.json`).
 - **Offline income**: when you come back, you get everything your generators would have made while you were gone, up to 8 hours, with a "Welcome back!" popup.
@@ -24,7 +36,7 @@ The window opens in a phone-shaped portrait layout (720×1280, scaled down on de
 
 | Path | What it is |
 | --- | --- |
-| `scripts/game_state.gd` | Autoload `Game`: economy, save/load, offline income, number formatting |
+| `scripts/game_state.gd` | Autoload `Game`: economy, geodes and rarities, save/load, offline income, number formatting |
 | `scripts/main.gd` | Main screen UI (built in code) |
 | `scripts/crystal.gd` | The procedurally drawn, tappable crystal |
 | `scenes/main.tscn` | Main scene |

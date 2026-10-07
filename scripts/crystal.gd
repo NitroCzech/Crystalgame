@@ -3,18 +3,20 @@ extends Control
 
 signal tapped(global_pos: Vector2)
 
-const FACET_LIGHT := Color("b9a6ff")
-const FACET_MID := Color("8c6dff")
-const FACET_DARK := Color("4f31c2")
-const OUTLINE := Color("e6deff")
-const GLOW := Color(0.62, 0.45, 1.0)
+## Base color; facets, outline and glow are derived from it.
+var tint := Color("8c6dff"):
+	set(value):
+		tint = value
+		queue_redraw()
+## When false the crystal is display-only (e.g. in the geode reveal).
+var interactive := true
 
 var _time := 0.0
 var _tween: Tween
 
 
 func _ready() -> void:
-	mouse_filter = MOUSE_FILTER_STOP
+	mouse_filter = MOUSE_FILTER_STOP if interactive else MOUSE_FILTER_IGNORE
 	resized.connect(func() -> void: pivot_offset = size / 2.0)
 	pivot_offset = size / 2.0
 
@@ -45,9 +47,13 @@ func _draw() -> void:
 	var c := size / 2.0
 	var r := minf(size.x, size.y) * 0.45
 	var pulse := 0.5 + 0.5 * sin(_time * 2.0)
+	var facet_light := tint.lightened(0.4)
+	var facet_mid := tint
+	var facet_dark := tint.darkened(0.4)
+	var outline_color := tint.lightened(0.75)
 
 	for i in 3:
-		draw_circle(c, r * (1.15 - i * 0.08), Color(GLOW, 0.06 + 0.04 * pulse))
+		draw_circle(c, r * (1.15 - i * 0.08), Color(tint, 0.06 + 0.04 * pulse))
 
 	var top := c + Vector2(0, -r)
 	var bottom := c + Vector2(0, r)
@@ -58,18 +64,18 @@ func _draw() -> void:
 	var core := c + Vector2(0, -r * 0.12)
 
 	var facets := [
-		[top, upper_right, core, FACET_LIGHT],
-		[top, upper_left, core, FACET_LIGHT.darkened(0.12)],
-		[upper_left, lower_left, core, FACET_MID.darkened(0.1)],
-		[upper_right, lower_right, core, FACET_MID],
-		[lower_left, bottom, core, FACET_DARK],
-		[lower_right, bottom, core, FACET_DARK.lightened(0.1)],
+		[top, upper_right, core, facet_light],
+		[top, upper_left, core, facet_light.darkened(0.12)],
+		[upper_left, lower_left, core, facet_mid.darkened(0.1)],
+		[upper_right, lower_right, core, facet_mid],
+		[lower_left, bottom, core, facet_dark],
+		[lower_right, bottom, core, facet_dark.lightened(0.1)],
 	]
 	for f in facets:
 		draw_colored_polygon(PackedVector2Array([f[0], f[1], f[2]]), f[3])
 
 	var outline := PackedVector2Array([top, upper_right, lower_right, bottom, lower_left, upper_left, top])
-	draw_polyline(outline, OUTLINE, 3.0, true)
+	draw_polyline(outline, outline_color, 3.0, true)
 
 	# A little moving sparkle.
 	var sparkle_pos := c + Vector2(-r * 0.25, -r * 0.45) + Vector2(cos(_time), sin(_time * 1.3)) * r * 0.05

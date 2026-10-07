@@ -1,12 +1,14 @@
 extends Node
 ## Global game state (autoloaded as `Game`).
 ##
-## Owns the shard balance, generators, tap upgrades, saving/loading and
-## offline income. UI reads from here and calls the buy/tap methods.
+## Owns the shard balance, generators, tap upgrades, geodes and the crystal
+## collection, saving/loading and offline income. UI reads from here and calls the buy/tap methods.
 
 ## Emitted when the game resumes after being suspended (e.g. app backgrounded)
 ## and passive income was awarded for the time away.
 signal offline_income_awarded(amount: float, seconds: float)
+## Emitted when a tap turns up a free geode.
+signal geode_found
 
 const SAVE_VERSION := 1
 const COST_GROWTH := 1.15
@@ -22,10 +24,27 @@ const TAP_UPGRADE_GROWTH := 6.0
 const GENERATORS := [
 	{"id": "miner", "name": "Shard Miner", "base_cost": 15.0, "rate": 0.1},
 	{"id": "drill", "name": "Crystal Drill", "base_cost": 100.0, "rate": 1.0},
-	{"id": "geode", "name": "Geode Farm", "base_cost": 1100.0, "rate": 8.0},
+	{"id": "quarry", "name": "Gem Quarry", "base_cost": 1100.0, "rate": 8.0},
 	{"id": "forge", "name": "Prism Forge", "base_cost": 12000.0, "rate": 47.0},
 	{"id": "refinery", "name": "Lunar Refinery", "base_cost": 130000.0, "rate": 260.0},
 	{"id": "temple", "name": "Crystal Temple", "base_cost": 1400000.0, "rate": 1400.0},
+]
+
+const GEODE_BASE_COST := 150.0
+const GEODE_COST_GROWTH := 1.18
+## Chance that a tap turns up a free geode.
+const GEODE_TAP_FIND_CHANCE := 0.015
+
+## What can come out of a geode, rarest last. `weight` is out of 10000 and
+## `bonus` is the permanent production boost each crystal gives (0.01 = +1%).
+const RARITIES := [
+	{"id": "common", "rarity": "Common", "name": "Quartz", "weight": 5500, "bonus": 0.01, "color": "c9c3d9"},
+	{"id": "uncommon", "rarity": "Uncommon", "name": "Amethyst", "weight": 2500, "bonus": 0.03, "color": "7ee07a"},
+	{"id": "rare", "rarity": "Rare", "name": "Sapphire", "weight": 1200, "bonus": 0.08, "color": "4fa8ff"},
+	{"id": "epic", "rarity": "Epic", "name": "Void Opal", "weight": 550, "bonus": 0.20, "color": "c35cff"},
+	{"id": "legendary", "rarity": "Legendary", "name": "Sunstone", "weight": 200, "bonus": 0.50, "color": "ffa531"},
+	{"id": "mythic", "rarity": "Mythic", "name": "Bloodheart Ruby", "weight": 45, "bonus": 1.50, "color": "ff4d6d"},
+	{"id": "celestial", "rarity": "Celestial", "name": "Starcore Diamond", "weight": 5, "bonus": 5.00, "color": "7ff6ff"},
 ]
 
 const NUMBER_SUFFIXES := ["K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"]
@@ -37,6 +56,13 @@ var lifetime_shards := 0.0
 var tap_level := 0
 ## Generator id -> number owned.
 var owned: Dictionary = {}
+## Unopened geodes.
+var geodes := 0
+var geodes_bought := 0
+var geodes_opened := 0
+## Rarity id -> number of crystals found.
+var crystals: Dictionary = {}
+var rng := RandomNumberGenerator.new()
 
 var _autosave_timer := 0.0
 var _last_tick_time := 0.0
@@ -44,6 +70,7 @@ var _offline_report := {"amount": 0.0, "seconds": 0.0}
 
 
 func _ready() -> void:
+	rng.randomize()
 	reset()
 	load_game()
 
@@ -82,6 +109,12 @@ func reset() -> void:
 	owned.clear()
 	for def in GENERATORS:
 		owned[def.id] = 0
+	geodes = 0
+	geodes_bought = 0
+	geodes_opened = 0
+	crystals.clear()
+	for r in RARITIES:
+		crystals[r.id] = 0
 	_offline_report = {"amount": 0.0, "seconds": 0.0}
 	_last_tick_time = Time.get_unix_time_from_system()
 
@@ -98,11 +131,14 @@ func add_shards(amount: float) -> void:
 func tap() -> float:
 	var value := get_tap_value()
 	add_shards(value)
+	if rng.randf() < GEODE_TAP_FIND_CHANCE:
+		geodes += 1
+		geode_found.emit()
 	return value
 
 
 func get_tap_value() -> float:
-	return pow(2.0, tap_level)
+	return pow(2.0, tap_level) * get_production_multiplier()
 
 
 func get_tap_upgrade_cost() -> float:
@@ -145,7 +181,63 @@ func get_shards_per_second() -> float:
 	var total := 0.0
 	for def in GENERATORS:
 		total += def.rate * owned.get(def.id, 0)
-	return total
+	return total * get_production_multiplier()
+
+
+# --- Geodes ------------------------------------------------------------------
+
+## 1.0 plus the bonus from every crystal in the collection; applies to taps
+## and generators.
+func get_production_multiplier() -> float:
+	var bonus := 0.0
+	for r in RARITIES:
+		bonus += r.bonus * crystals.get(r.id, 0)
+	return 1.0 + bonus
+
+
+func get_geode_cost() -> float:
+	return ceilf(GEODE_BASE_COST * pow(GEODE_COST_GROWTH, geodes_bought))
+
+
+func buy_geode() -> bool:
+	var cost := get_geode_cost()
+	if shards < cost:
+		return false
+	shards -= cost
+	geodes_bought += 1
+	geodes += 1
+	return true
+
+
+func get_rarity(id: String) -> Dictionary:
+	for r in RARITIES:
+		if r.id == id:
+			return r
+	return {}
+
+
+## Picks a rarity by weight. `roll` is in [0, 1); exposed for tests.
+func roll_rarity(roll: float) -> Dictionary:
+	var total := 0
+	for r in RARITIES:
+		total += r.weight
+	var target := roll * total
+	for r in RARITIES:
+		target -= r.weight
+		if target < 0.0:
+			return r
+	return RARITIES[-1]
+
+
+## Opens one geode and returns the rarity found, or {} if there are none.
+func open_geode() -> Dictionary:
+	if geodes <= 0:
+		return {}
+	geodes -= 1
+	geodes_opened += 1
+	var found := roll_rarity(rng.randf())
+	crystals[found.id] = crystals.get(found.id, 0) + 1
+	return found
 
 
 ## Adds income for `seconds` spent away (capped) and returns the amount.
@@ -172,6 +264,10 @@ func to_dict() -> Dictionary:
 		"lifetime_shards": lifetime_shards,
 		"tap_level": tap_level,
 		"owned": owned.duplicate(),
+		"geodes": geodes,
+		"geodes_bought": geodes_bought,
+		"geodes_opened": geodes_opened,
+		"crystals": crystals.duplicate(),
 		"saved_at": Time.get_unix_time_from_system(),
 	}
 
@@ -185,6 +281,13 @@ func apply_dict(data: Dictionary) -> void:
 	if saved_owned is Dictionary:
 		for def in GENERATORS:
 			owned[def.id] = maxi(0, int(saved_owned.get(def.id, 0)))
+	geodes = maxi(0, int(data.get("geodes", 0)))
+	geodes_bought = maxi(0, int(data.get("geodes_bought", 0)))
+	geodes_opened = maxi(0, int(data.get("geodes_opened", 0)))
+	var saved_crystals = data.get("crystals", {})
+	if saved_crystals is Dictionary:
+		for r in RARITIES:
+			crystals[r.id] = maxi(0, int(saved_crystals.get(r.id, 0)))
 
 
 func save_game() -> bool:

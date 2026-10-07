@@ -12,6 +12,11 @@ const GOLD := Color("ffd76a")
 
 var _shards_label: Label
 var _rate_label: Label
+var _bonus_label: Label
+var _open_geode_button: Button
+var _buy_geode_button: Button
+## Rarity id -> Label in the collection strip.
+var _collection_labels := {}
 var _crystal: Control
 var _tap_button: Button
 var _tap_labels: Array[Label] = []
@@ -23,6 +28,7 @@ func _ready() -> void:
 	theme = _make_theme()
 	_build_ui()
 	Game.offline_income_awarded.connect(_show_offline_popup)
+	Game.geode_found.connect(_on_geode_found)
 	var report := Game.take_offline_report()
 	if report.amount > 0.0:
 		_show_offline_popup(report.amount, report.seconds)
@@ -36,6 +42,17 @@ func _process(_delta: float) -> void:
 func _refresh() -> void:
 	_shards_label.text = Game.format_number(floorf(Game.shards))
 	_rate_label.text = "%s shards / sec" % Game.format_number(Game.get_shards_per_second())
+	var bonus := Game.get_production_multiplier() - 1.0
+	_bonus_label.text = "Crystal bonus +%s%%" % Game.format_number(bonus * 100.0) if bonus > 0.0 \
+			else "Open geodes to find bonus crystals"
+
+	_open_geode_button.text = "Open Geode (%d)" % Game.geodes
+	_open_geode_button.disabled = Game.geodes <= 0
+	var geode_cost := Game.get_geode_cost()
+	_buy_geode_button.text = "Buy Geode  %s" % Game.format_number(geode_cost)
+	_buy_geode_button.disabled = Game.shards < geode_cost
+	for r in Game.RARITIES:
+		_collection_labels[r.id].text = "◆%d" % Game.crystals.get(r.id, 0)
 
 	var tap_cost := Game.get_tap_upgrade_cost()
 	_tap_labels[0].text = "Sharper Pickaxe  (Lv %d)" % Game.tap_level
@@ -59,12 +76,23 @@ func _on_crystal_tapped(global_pos: Vector2) -> void:
 	_spawn_floating_text("+" + Game.format_number(value), global_pos)
 
 
-func _spawn_floating_text(text: String, global_pos: Vector2) -> void:
+func _on_geode_found() -> void:
+	var center := _crystal.global_position + _crystal.size / 2.0 + Vector2(-90, -_crystal.size.y * 0.4)
+	_spawn_floating_text("Geode found!", center, GOLD)
+
+
+func _on_open_geode_pressed() -> void:
+	var found := Game.open_geode()
+	if not found.is_empty():
+		_show_geode_reveal(found)
+
+
+func _spawn_floating_text(text: String, global_pos: Vector2, color := Color.WHITE) -> void:
 	var label := Label.new()
 	label.text = text
 	label.mouse_filter = MOUSE_FILTER_IGNORE
 	label.add_theme_font_size_override("font_size", 40)
-	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_color", color)
 	label.add_theme_color_override("font_outline_color", ACCENT.darkened(0.4))
 	label.add_theme_constant_override("outline_size", 8)
 	add_child(label)
@@ -110,15 +138,39 @@ func _build_ui() -> void:
 	_rate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(_rate_label)
 
+	_bonus_label = _make_label("", 24, TEXT_DIM)
+	_bonus_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(_bonus_label)
+
 	var crystal_area := CenterContainer.new()
 	crystal_area.size_flags_vertical = SIZE_EXPAND_FILL
 	crystal_area.size_flags_stretch_ratio = 1.0
 	column.add_child(crystal_area)
 
 	_crystal = Crystal.new()
-	_crystal.custom_minimum_size = Vector2(380, 380)
+	_crystal.custom_minimum_size = Vector2(320, 320)
 	_crystal.tapped.connect(_on_crystal_tapped)
 	crystal_area.add_child(_crystal)
+
+	var collection := HBoxContainer.new()
+	collection.alignment = BoxContainer.ALIGNMENT_CENTER
+	collection.add_theme_constant_override("separation", 18)
+	column.add_child(collection)
+	for r in Game.RARITIES:
+		var label := _make_label("", 26, Color(r.color))
+		label.tooltip_text = "%s %s" % [r.rarity, r.name]
+		collection.add_child(label)
+		_collection_labels[r.id] = label
+
+	var geode_bar := HBoxContainer.new()
+	geode_bar.add_theme_constant_override("separation", 12)
+	column.add_child(geode_bar)
+	_open_geode_button = _make_wide_button(ACCENT)
+	_open_geode_button.pressed.connect(_on_open_geode_pressed)
+	geode_bar.add_child(_open_geode_button)
+	_buy_geode_button = _make_wide_button(GOLD)
+	_buy_geode_button.pressed.connect(Game.buy_geode)
+	geode_bar.add_child(_buy_geode_button)
 
 	column.add_child(_make_label("Shop", 32, Color.WHITE))
 
@@ -181,6 +233,17 @@ func _make_shop_row() -> Dictionary:
 	return {"button": button, "name_label": name_label, "info_label": info_label, "cost_label": cost_label}
 
 
+func _make_wide_button(font_color: Color) -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(0, 88)
+	button.size_flags_horizontal = SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 28)
+	button.add_theme_color_override("font_color", font_color)
+	button.add_theme_color_override("font_hover_color", font_color)
+	button.add_theme_color_override("font_pressed_color", font_color)
+	return button
+
+
 func _make_label(text: String, font_size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.text = text
@@ -218,7 +281,8 @@ func _make_theme() -> Theme:
 	return t
 
 
-func _show_offline_popup(amount: float, seconds: float) -> void:
+## Builds a dimmed overlay with a centered panel; returns [overlay, content_box].
+func _make_popup() -> Array:
 	var overlay := ColorRect.new()
 	overlay.color = Color(0, 0, 0, 0.6)
 	overlay.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
@@ -234,7 +298,15 @@ func _show_offline_popup(amount: float, seconds: float) -> void:
 
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 20)
+	box.custom_minimum_size = Vector2(520, 0)
 	panel.add_child(box)
+	return [overlay, box]
+
+
+func _show_offline_popup(amount: float, seconds: float) -> void:
+	var popup := _make_popup()
+	var overlay: Control = popup[0]
+	var box: VBoxContainer = popup[1]
 
 	var title := _make_label("Welcome back!", 44, Color.WHITE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -255,3 +327,65 @@ func _show_offline_popup(amount: float, seconds: float) -> void:
 	collect.custom_minimum_size = Vector2(0, 88)
 	collect.pressed.connect(overlay.queue_free)
 	box.add_child(collect)
+
+
+func _show_geode_reveal(found: Dictionary) -> void:
+	var popup := _make_popup()
+	var overlay: Control = popup[0]
+	var box: VBoxContainer = popup[1]
+	var color := Color(found.color)
+
+	var rarity := _make_label(found.rarity.to_upper(), 36, color)
+	rarity.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(rarity)
+
+	var holder := CenterContainer.new()
+	box.add_child(holder)
+	var gem := Crystal.new()
+	gem.interactive = false
+	gem.tint = color
+	gem.custom_minimum_size = Vector2(220, 220)
+	holder.add_child(gem)
+	gem.scale = Vector2(0.2, 0.2)
+	gem.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT) \
+			.tween_property(gem, "scale", Vector2.ONE, 0.45)
+
+	var name_label := _make_label(found.name, 44, Color.WHITE)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(name_label)
+
+	var odds: float = 100.0 * found.weight / _total_rarity_weight()
+	var info := _make_label("+%s%% production forever\n%s%% chance" % [
+			Game.format_number(found.bonus * 100.0), _format_percent(odds)], 26, TEXT_DIM)
+	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(info)
+
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 12)
+	box.add_child(buttons)
+	if Game.geodes > 0:
+		var again := _make_wide_button(GOLD)
+		again.text = "Open another (%d)" % Game.geodes
+		again.pressed.connect(func() -> void:
+			overlay.queue_free()
+			_on_open_geode_pressed())
+		buttons.add_child(again)
+	var done := _make_wide_button(Color.WHITE)
+	done.text = "Nice!"
+	done.pressed.connect(overlay.queue_free)
+	buttons.add_child(done)
+
+
+func _total_rarity_weight() -> float:
+	var total := 0.0
+	for r in Game.RARITIES:
+		total += r.weight
+	return total
+
+
+func _format_percent(value: float) -> String:
+	if value >= 10.0:
+		return "%d" % roundi(value)
+	if value >= 1.0:
+		return "%.1f" % value
+	return "%.2f" % value
